@@ -1,0 +1,7 @@
+{{- define "e" }}
+{{- if ne .v ""}}{{.k}}: {{.v}}{{end}}
+{{- end }}
+{{ $d := dict "k" "smtp_user"     "v" (.Env.SMTP_HOST_USER    |default "")}}{{ template "e" $d}}
+{{ $d := dict "k" "smtp_pass" "v" (.Env.SMTP_HOST_PASSWORD|default "")}}{{ template "e" $d}}
+[mailman]
+site_owner: {{.Env.SERVER_EMAIL}}

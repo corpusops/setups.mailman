@@ -1,0 +1,229 @@
+version: '3.7'
+x-images:
+  x-base: &base {restart: unless-stopped, env_file: [.env], depends_on: [log]}
+services:
+  log:
+    <<: [ *base ]
+    image: corpusops/rsyslog
+    volumes: [logs:/var/log]
+    ports: ["127.0.0.1:45713:10514"]
+    networks: {mailman: {}}
+    depends_on: []
+  setup-debian:
+    <<: [ *base ]
+    logging: {driver: syslog, options: {tag: "setup", syslog-address: "tcp://127.0.0.1:45713"}}
+    image: "${SERVICES_DEBIAN_IMAGE}"
+    entrypoint:
+    - /bin/sh
+    - '-exc'
+    - |-
+      mkdir -pv /helpers/debian >/dev/null 2>&1|| true
+      cp -rfv /cops_helpers/. /helpers/debian
+      alias nc="busybox nc"
+      while true;do printf "HTTP/2.1 200 OK\n\nS"| ( nc -l -p 80 || /bin/true);done
+    logging: {driver: syslog, options: {tag: "setup-debian", syslog-address: "tcp://127.0.0.1:45713"}}
+    networks: {mailman: {}}
+    volumes:
+    - "helpers:/helpers"
+  setup-services:
+    <<: [ *base ]
+    logging: {driver: syslog, options: {tag: "setup", syslog-address: "tcp://127.0.0.1:45713"}}
+    image: "${SERVICES_IMAGE}"
+    entrypoint:
+    - /bin/sh
+    - '-exc'
+    - |-
+      mkdir -pv /helpers/alpine >/dev/null 2>&1|| true
+      cp -rfv /cops_helpers/. /helpers/alpine
+      while true;do printf "HTTP/1.1 200 OK\n\nS"| ( nc -l -p 80 || /bin/true);done
+    logging: {driver: syslog, options: {tag: "setup", syslog-address: "tcp://127.0.0.1:45713"}}
+    networks: {mailman: {}}
+    volumes:
+    - "helpers:/helpers"
+  ldapauth:
+    <<: [ *base ]
+    logging: {driver: syslog, options: {tag: "ldapauth", syslog-address: "tcp://127.0.0.1:45713"}}
+    image: "${LDAPAUTH_IMAGE}"
+    networks: {mailman: {}}
+  mailman: &services_mailman
+    <<: [ *base ]
+    logging: {driver: syslog, options: {tag: "mailman", syslog-address: "tcp://127.0.0.1:45713"}}
+    image: "${MAILMAN_IMAGE}"
+    ports: ["${LISTENING_INT_IF}:${LISTENING_INT_PORT}:8080"]
+    environment:
+      DATABASE_TYPE: "${MM_DB_TYPE:-postgres}"
+      DATABASE_URL: "${MM_DB_URL}"
+      SECRET_KEY: "${MM_SECRET_KEY}"
+      DATABASE_CLAS: "mailman.database.postgresql.PostgreSQLDatabase"
+    networks: {mailman: {ipv4_address: "${MAILMAN_NETWORK}.23", aliases: ["mailman-core"]}}
+    entrypoint:
+    - /bin/bash
+    - '-exc'
+    - |
+      export PATH=/helpers/alpine:$PATH
+      while ! ( dockerize --version >/dev/null 2>&1 );do echo waithelp;sleep 1;done
+      SVC_STARTUP_TIMEOUT=$${MYSQL_STARTUP_TIMEOUT:-45s}
+      dockerize -wait http://setup-services -timeout $${SVC_STARTUP_TIMEOUT}
+      dockerize -wait http://dbs -timeout $${SVC_STARTUP_TIMEOUT}
+      p=/
+      rm /etc/logrotate.d/*
+      ( cd /conf && while read f;do \
+        j=$$(echo $$f|sed -re "s/.j?frep//g");\
+        frep --overwrite /conf/$$f:$$p/$$j --overwrite;\
+        done < <(find -type f) )
+      ( /bin/cron.sh )&
+      exec docker-entrypoint.sh master --force
+    volumes:
+    - "helpers:/helpers"
+    - "./mailman:/conf"
+    - "$DATA_DIR/mailman:/opt/mailman"
+    ports: ["${LISTENING_INT_IF}:${LISTENING_INT_MM_HTTP_PORT:-8001}:8001",
+            "${LISTENING_INT_IF}:${LISTENING_INT_MM_UWSGI_PORT:-8024}:8024"]
+  web:
+    <<: [ *base ]
+    depends_on: [log, setup-services]
+    image: "${WEB_IMAGE}"
+    logging: {driver: syslog, options: {tag: "web", syslog-address: "tcp://127.0.0.1:45713"}}
+    networks: {mailman: {aliases: ["mailman-web"]}}
+    environment:
+      DATABASE_TYPE: "${WEB_DB_TYPE:-postgres}"
+      DATABASE_URL: "${WEB_DB_URL}"
+      SECRET_KEY: "${WEB_SECRET_KEY}"
+      UWSGI_STATIC_MAP: /static=/opt/mailman-web-data/static
+    entrypoint:
+    - bash
+    - "-exc"
+    - |-
+      export PATH=/helpers/alpine:$PATH
+      while ! ( dockerize --version >/dev/null 2>&1 );do echo waithelp;sleep 1;done
+      SVC_STARTUP_TIMEOUT=$${MYSQL_STARTUP_TIMEOUT:-45s}
+      dockerize -wait http://setup-services -timeout $${SVC_STARTUP_TIMEOUT}
+      dockerize -wait http://dbs -timeout $${SVC_STARTUP_TIMEOUT}
+      p=$$(pwd)
+      ( cd /conf && while read f;do \
+        j=$$(echo $$f|sed -re "s/.j?frep//g");echo "Gen: $$f > $$j";\
+        frep --overwrite /conf/$$f:$$p/$$j --overwrite;\
+        done < <(find -type f) )
+      cp settings.py settings_copy.py
+      exec docker-entrypoint.sh uwsgi --ini /opt/mailman-web/uwsgi.ini
+    volumes:
+    - "helpers:/helpers"
+    - "$DATA_DIR/web:/opt/mailman-web-data"
+    - "./web:/conf:ro"
+    ports: ["${LISTENING_INT_IF}:${LISTENING_INT_WEB_HTTP_PORT:-8000}:8000",
+            "${LISTENING_INT_IF}:${LISTENING_INT_WEB_UWSGI_PORT:-8080}:8080"]
+  nginx:
+    <<: [ *base ]
+    depends_on: [log, mailman, web]
+    logging: {driver: syslog, options: {tag: "nginx", syslog-address: "tcp://127.0.0.1:45713"}}
+    networks: {mailman: {aliases: ["mailman-web"]}}
+    image: "${NGINX_IMAGE}"
+    ports: ["${LISTENING_IF}:${LISTENING_PORT}:80"]
+    entrypoint:
+    - bash
+    - "-ec"
+    - |-
+      cp -vrf /etc/nginx.d/. /etc/nginx
+      ( cd /etc/nginx && while read f;do echo "gen $$f"; \
+        j=$$(echo $$f|sed -re "s/.j?frep//g");echo "Gen: $$f > $$j";\
+        frep $$f:$$j --overwrite; \
+        done < <(find -type f -name "*frep"); )
+      exec nginx -g "daemon off;"
+    volumes:
+    - ./nginx:/etc/nginx.d
+    - "$DATA_DIR/web:/web:ro"
+  db:
+    <<: [ *base ]
+    logging: {driver: syslog, options: {tag: "db", syslog-address: "tcp://127.0.0.1:45713"}}
+    image: "$PG_IMAGE"
+    networks: {mailman: {}}
+    ports: ["${LISTENING_INT_IF}:${LISTENING_INT_PSQL_PORT:-5432}:5432"]
+    volumes:
+    - postgresql:/var/lib/postgresql/data
+    - "$DATA_DIR:/mailman-data"
+
+    - /root/.ssh:/root/.ssh:ro
+
+  dbs:
+    <<: [ *base ]
+    depends_on: [log, db]
+    logging: {driver: syslog, options: {tag: "dbs", syslog-address: "tcp://127.0.0.1:45713"}}
+    networks: {mailman: {}}
+    image: "$DBS_IMAGE"
+    entrypoint:
+    - "bash"
+    - "-ec"
+    - |-
+      set -x
+      POSTGRES_STARTUP_TIMEOUT=$${POSTGRES_STARTUP_TIMEOUT:-45s}
+      flag=/started_$$(echo $$POSTGRES_DB|sed -re "s![/:]!__!g")
+      if [ -e "$$flag" ];then rm -f "$$flag";fi
+      echo "Try connection to pgsql & wait for db init" >&2
+      ( while true;do if ( \
+        echo "select 1"| psql -v ON_ERROR_STOP=1 "$$A_DB_URL"\
+      );then touch $$flag && break;fi;done )&
+      dockerize -wait file://$$flag -timeout $${POSTGRES_STARTUP_TIMEOUT}
+      set -x
+      echo "SELECT 'CREATE DATABASE $$WEB_DB_NAME \
+          OWNER=$$WEB_DB_USER' \
+          WHERE NOT EXISTS (SELECT FROM pg_database \
+                            WHERE datname = '$$WEB_DB_NAME')\\gexec" \
+      | psql -v ON_ERROR_STOP=1 "$$A_DB_URL"
+      echo "SELECT 'CREATE DATABASE $$MM_DB_NAME \
+          OWNER=$$MM_DB_USER' \
+          WHERE NOT EXISTS (SELECT FROM pg_database \
+                            WHERE datname = '$$MM_DB_NAME')\\gexec" \
+      | psql -v ON_ERROR_STOP=1 "$$A_DB_URL"
+      set -x
+      ( while true;do printf "HTTP/1.1 200 OK\n\nS"| ( nc -l -p 80 || /bin/true);done )&
+      exec dbs-entry.sh $$@
+    volumes:
+    - backupdb-dumps:/var/db_smart_backup/
+    - backupdb-logs:/var/db_smart_backup/logs/
+  postfix:
+    <<: [ *base ]
+    depends_on: [log, db]
+    image: "$POSTFIX_IMAGE"
+    entrypoint:
+    - bash
+    - "-exc"
+    - |-
+      export PATH=/helpers/debian:$PATH
+      while ! ( dockerize --version >/dev/null 2>&1 );do echo waithelp;sleep 1;done
+      SVC_STARTUP_TIMEOUT=$${MYSQL_STARTUP_TIMEOUT:-45s}
+      dockerize -wait http://setup-debian -timeout $${SVC_STARTUP_TIMEOUT}
+      p=/
+      ( cd /conf && while read f;do \
+        j=$$(echo $$f|sed -re "s/.j?frep//g");\
+        frep --overwrite /conf/$$f:$$p/$$j --overwrite;\
+        done < <(find -type f) )
+      for i in /etc/aliases /etc/postfix/virtual;do postmap $$i;done
+      exec /entry.sh /usr/bin/s6-svscan /etc/s6
+    logging: {driver: syslog, options: {tag: "postfix", syslog-address: "tcp://127.0.0.1:45713"}}
+    volumes:
+    - "helpers:/helpers"
+    - "$DATA_DIR/mailman:/opt/mailman:ro"
+    - "postfix-spool:/var/spool/postfix"
+    - "./postfix:/conf"
+    networks: {mailman: {ipv4_address: "${MAILMAN_NETWORK}.24"}}
+    environment:
+      MAILNAME: "${LISTS_DOMAIN}"
+      # RELAYHOST - Postfix relayhost. Default ''. (example mail.example.com:25)
+      # RELAYHOST_PASSWORDMAP - relayhost password map in format: RELAYHOST_PASSWORDMAP=mail1.example.com:user1:pass2,mail2.example.com:user2:pass2
+    ports:
+    - "${LISTENING_IF}:${LISTENING_SMTPPORT:-10025}:25"
+    - "${LISTENING_IF}:${LISTENING_SMTPPORT:-12025}:25"
+    - "${LISTENING_IF}:${LISTENING_SMTPS_PORT:-10587}:587"
+    - "${LISTENING_IF}:${LISTENING_SMTPS_PORT:-10465}:587"
+networks:
+  mailman:
+    driver: bridge
+    name: "${MAILMAN_NETWORK_NAME:-mailman}"
+    ipam: {driver: default, config: [{subnet: "${MAILMAN_NETWORK}.0/24"}]}
+volumes:
+  logs:
+  helpers:
+  postgresql:
+  backupdb-dumps:
+  backupdb-logs:
+  postfix-spool:

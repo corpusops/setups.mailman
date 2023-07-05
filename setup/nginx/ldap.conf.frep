@@ -1,0 +1,18 @@
+{{ if .Env.LDAP_URL | default "" | ne "" }}
+location = /auth-proxy {
+  internal;
+  proxy_pass http://ldapauth:8888;
+  proxy_cache auth_cache;
+  proxy_cache_valid 200 10m;
+  proxy_pass_request_body off;
+  proxy_set_header Content-Length "";
+  proxy_set_header X-Ldap-URL {{.Env.LDAP_URL}};
+  proxy_set_header X-Ldap-BaseDN {{.Env.LDAP_BASEDN}};
+  proxy_set_header X-Ldap-BindDN {{.Env.LDAP_BINDDN}};
+  proxy_set_header X-Ldap-BindPass {{.Env.LDAP_BINDPW}};
+{{ if .Env.LDAP_STARTTLS | default "" | ne "" }}
+  proxy_set_header X-Ldap-Starttls true;
+{{ end }}
+  proxy_set_header X-Ldap-Template {{.Env.LDAP_FILTER}};
+}
+{{ end }}

@@ -1,0 +1,23 @@
+---
+- set_fact:
+    mailman_host_dirs: |
+        {% set directories = [] %}
+        {% for mailman_volume in mailman_volumes %}
+        {% set d = mailman_volume.split(':')[0] %}
+        {% set _ = directories.append(d) %}
+        {% endfor %}
+        {% set _ = directories.append(mailman_data_volume) %}
+        {{ directories | to_json }}
+- file:
+    path: "{{item}}"
+    mode: "0711"
+    state: directory
+  with_items: "{{mailman_host_dirs}}"
+- file:
+    state: directory
+    path: "{{mailman_versioned_hostdir}}"
+- file:
+    state: link
+    force: true
+    src: "{{mailman_versioned_hostdir}}"
+    path: "{{mailman_hostdir}}"

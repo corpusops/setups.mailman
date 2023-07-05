@@ -1,0 +1,10 @@
+---
+# APP
+- hosts: "{{mailman_servers|default('all')}}"
+  roles: [corpusops.roles/ansible_plugins]
+  tasks:
+  - when: ["mailman_lifecycle_app|default(true)"]
+    tags: ["mailman_lifecycle_app"]
+    block:
+    - include_role: {name: mailman/vars, public: true, allow_duplicates: false}
+    - include_role: {name: mailman,      public: true, allow_duplicates: false}

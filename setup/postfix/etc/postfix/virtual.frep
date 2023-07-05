@@ -1,0 +1,5 @@
+{{ $c := ( .Env.MAILMAN_REDIR_ALL_MAILS | default "" | eq "" ) | ternary "#" "" }}
+/(root|postmaster)@/       {{.Env.SERVER_EMAIL}}
+{{$c}}if !/{{.Env.SERVER_EMAIL}}|(@({{.Env.MAILMAN_DESTINATIONS|splitList " "|join "|" }}))/
+{{$c}}/.*/    {{.Env.SERVER_EMAIL}}
+{{$c}}endif

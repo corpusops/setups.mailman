@@ -1,0 +1,15 @@
+/opt/mailman/var/logs/*.log
+{
+  daily
+  nodateext
+  missingok
+  copytruncate
+  rotate {{.Env.MAILMAN_ROTATE_DAYS | default "365"}}
+  compress
+  delaycompress
+  notifempty
+  sharedscripts
+      postrotate
+          su mailman -s /bin/bash -c "mailman reopen" >/dev/null 2>&1
+  endscript
+}

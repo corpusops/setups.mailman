@@ -1,0 +1,82 @@
+{{- $v := dict "$" $ }}
+{{- $v := merge $v ( dict "Env"         .Env) }}
+{{- $v := merge $v ( dict "real_ip_from_recursive" ( .Env.NGINX_REAL_IP_FROM_RECURSIVE | default "on" )      ) }}
+{{- $v := merge $v ( dict "real_ip_from"           ( .Env.NGINX_REAL_IP_FROM | default "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16" )) }}
+{{- $v := merge $v ( dict "real_ip_header"         ( .Env.NGINX_REAL_IP_HEADER | default "x-forwarded-for" ) ) }}
+{{- $v := merge $v ( dict "server_name"     ( .Env.SERVER_NAME | default "_" )      ) }}
+{{- $v := merge $v ( dict "web_sn"          ( .Env.WEB_DOMAIN     | default "_" )    ) }}
+{{- $v := merge $v ( dict "web_alt_sn"      ( .Env.WEB_ALT_DOMAINS | default "" )    ) }}
+{{- $v := merge $v ( dict "log_level"       ( .Env.NGINX_LOGLEVEL | default "crit") ) }}
+{{- $v := merge $v ( dict "maxbodysize"     ( .Env.NGINX_MAXBODYSIZE | default "0") ) }}
+{{- $v := merge $v ( dict "forcessl"        ( .Env.NGINX_FORCESSL | default "1" )   ) }}
+{{- $v := merge $v ( dict "pb"              ( .Env.NGINX_PROXYBUFFERING | default "off" ) ) }}
+{{- $v := merge $v ( dict "server_tokens"   ( .Env.NGINX_SERVER_TOKENS  | default "off" ) ) }}
+{{- $v := merge $v ( dict "proxytimeout"    ( .Env.NGINX_PROXYTIMEOUT | default (mul 60 60 4) ) ) }}
+{{- $v := merge $v ( dict "blocks" list )}}
+user nginx;
+worker_processes 4;
+pid /run/nginx.pid;
+events { worker_connections 768; }
+# Obtain best http host
+# activate real_ip logging
+{{- define "pass" }}
+    proxy_http_version 1.1;
+    proxy_cookie_path / "/; Secure";
+    proxy_set_header Host $best_http_host;
+    proxy_set_header X-Forwarded-Host $best_http_host;
+    proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $forwarded_ssl_scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_buffering off; proxy_request_buffering off;
+    proxy_send_timeout 900; proxy_read_timeout 900;
+    {{ if (.nopass|default "")|ne  " "}}
+    proxy_pass http://{{.upstream}};
+    {{ end }}
+{{- end }}
+{{- define "vhost" }}
+    server {
+      listen 80;
+      server_name {{.server_names}} {{.alt_server_names}};
+      default_type application/octet-stream;
+      access_log /dev/stdout custom_timed_combined if=$method_loggable;
+      error_log syslog:server=log:10514,tag=nginx_error {{.log_level}};
+      proxy_buffering {{.pb}}; proxy_request_buffering {{.pb}};
+      chunked_transfer_encoding on;client_max_body_size {{ .maxbodysize }};
+      gzip on;gzip_disable "msie6";
+{{ if .Env.LDAP_URL | default "" | ne "" }}
+      include ldap.conf;
+      auth_request /auth-proxy;
+{{ end }}
+      location /static { alias /{{.upstream}}/static; autoindex off; }
+      location /       { {{ template "pass" . }} }
+    }
+{{- end }}
+{{- define "conf" }}
+http {
+{{ if .Env.LDAP_URL | default "" | ne "" }}
+    include ldapcache.conf;
+{{ end }}
+    real_ip_header {{ .real_ip_header }};
+    real_ip_recursive {{ .real_ip_from_recursive }};
+    {{ range .real_ip_from | splitList " " }}set_real_ip_from {{ . }};{{ end }}
+    map $http_host $this_host { default $http_host; '' $host; }
+    map $http_x_forwarded_host $best_http_host { default $http_x_forwarded_host; '' $this_host; }
+    map $request_method $method_loggable1 {OPTIONS 0;default 1;}
+    map $method_loggable1 $method_loggable  {"~0" 0;default 1;}
+    map $http_x_forwarded_proto $x_forwarded_proto { default $http_x_forwarded_proto; "" $scheme; }
+    map "$http_x_ssl$http_x_forwarded_proto" $forwarded_ssl_scheme {default $scheme; "~(1|https|ssl)" https;}
+    map "$http_x_ssl$http_x_forwarded_proto" $gunicorn_x_forwarded_proto {default $scheme; "~(1|https|ssl)" ssl;}
+    log_format custom_timed_combined '$remote_addr - "$remote_user" - $host - [$time_iso8601] - "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" $request_time $upstream_response_time $pipe';
+    client_body_temp_path /tmp/client_body_temp; proxy_temp_path /tmp/proxy_temp; fastcgi_temp_path /tmp/fastcgi_temp; uwsgi_temp_path /tmp/uwsgi_temp; scgi_temp_path /tmp/scgi_temp;
+    tcp_nopush on;tcp_nodelay on;
+    types_hash_max_size 2048; variables_hash_max_size 1024; variables_hash_bucket_size 256; server_names_hash_bucket_size 256; server_names_hash_max_size 1024;
+    sendfile off;
+    server_tokens {{.server_tokens}};
+    keepalive_timeout 65;
+    include /etc/nginx/mime.types;
+    upstream web { server web:{{.upstream_port|default "8000"}}; }
+    {{- template "vhost" ( . | merge ( dict "server_name" .web_sn "alt_server_names" .web_alt_sn "upstream" "web" "blocks" ( list "web" ) ) ) }}
+}
+{{- end }}
+{{- template "conf" $v }}
+# vim: set ft=et ai:

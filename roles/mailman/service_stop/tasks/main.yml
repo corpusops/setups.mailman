@@ -1,0 +1,16 @@
+- include_role: {name: corpusops.roles/docker_compose_service}
+  vars:
+    _docker_compose_service:
+      project: "{{mailman_compose_project}}"
+      service_name: "{{mailman_servicename}}"
+      state: "{{mailman_stopped_state}}"
+      working_directory: "{{mailman_hostdir}}"
+      stdout: "{{mailman_stdout}}"
+      stderr: "{{mailman_stderr}}"
+  tags: [service_stop]
+- shell: |-
+    set -ex
+    if [ ! -e "{{mailman_hostdir}}/{{mailman_compose_files[0]}}" ];then exit 0;fi
+    cd {{mailman_hostdir}}
+    docker-compose down
+  tags: [service_dockercompose_stop]

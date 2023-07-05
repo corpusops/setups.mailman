@@ -1,0 +1,338 @@
+---
+mailman_dir: "/srv/docker/{{mailman_name}}"
+mailman_versioned_hostdir: "{{mailman_basedir}}/{{mailman_version}}"
+mailman_hostdir: "{{mailman_basedir}}/current"
+mailman_services_image: corpusops/alpine-bare
+mailman_services_debian_image: corpusops/debian-bare:sid
+mailman_ldapauth_image: "ghcr.io/linuxserver/ldap-auth:latest"
+mailman_volumes:
+- "{{mailman_hostdir}}"
+mailman_basedir: /srv/docker/mailman
+mailman_data_volume: "{{mailman_basedir}}/data"
+mailman_vversion: "v{{mailman_version}}"
+mailman_version: 0.4
+mailman_web_version: "{{mailman_version}}"
+mailman_nginx_image: "corpusops/nginx:1.21-alpine"
+mailman_postgres_image: "corpusops/postgres:13"
+mailman_dbs_image: "{{mailman_postgres_image.replace(':', '-').replace('/', '/dbsmartbackup:')}}"
+# mailman_image: "maxking/mailman-core:{{mailman_version}}"
+# https://github.com/maxking/docker-mailman/pull/528/files applied
+# but also add cron & logrotate
+mailman_image: "corpusops/maxking-mailman-core:{{mailman_version}}"
+mailman_web_image: "maxking/mailman-web:{{mailman_web_version}}"
+mailman_name: mailman
+mailman_code_dir: "{{playbook_dir}}"
+mailman_tld_domain: example.com
+mailman_domain: "mailman.{{mailman_tld_domain}}"
+mailman_domains: ["web.{{mailman_tld_domain}}", "postorius.{{mailman_tld_domain}}", "hyperkitty.{{mailman_tld_domain}}", "{{mailman_lists_domain}}"]
+mailman_alt_domains: "{% set r=['alt-'+mailman_domain]%}{% for i in mailman_domains%}{% set _=r.extend([i, 'alt-'+i])%}{%endfor%}{{r}}"
+mailman_destinations: "{{([mailman_domain]+mailman_alt_domains)|join(' ')}}"
+mailman_gateway: "{{ ansible_default_ipv4.address}}"
+mailman_composename: "{{mailman_name}}"
+mailman_servicename: "docker{{mailman_composename}}"
+mailman_compose_project: "{{mailman_composename}}"
+mailman_stopped_state: stopped
+mailman_started_state: started
+mailman_stdout: /dev/null
+mailman_stderr: /dev/null
+mailman_build_args: "--no-cache --pull"
+# backup could be remove in a-while when we have redeployed it everywhere
+mailman_restarted_services_default: "setup-services"
+mailman_restarted_services: "{{mailman_restarted_services_default}}"
+mailman_force_sync_ssh_user: null
+mailman_sync_ssh_user: ""
+mailman_sshargs: >-
+  {% set k = hostvars[inventory_hostname].get(
+                'ansible_ssh_private_key_file', '') %}
+  {% if k%}-o IdentityFile={{k}} -o IdentitiesOnly=yes{%endif%}
+  {% if (
+      hostvars[inventory_hostname].ansible_connection|default('ssh')
+     ) not in [ 'smart', 'local'] %}
+  {{ hostvars[inventory_hostname].ssh_args | default('') }}
+  {{ hostvars[inventory_hostname].ansible_ssh_args | default('') }}
+  {{ hostvars[inventory_hostname].ansible_ssh_common_args | default('') }}
+  {{ hostvars[inventory_hostname].ansible_ssh_extra_args | default('') }}
+  {% endif %}
+  {% if((mailman_force_sync_ssh_user) or
+        (mailman_sync_ssh_user and (mailman_force_sync_ssh_user == True))
+    )%}
+  {% set user = mailman_sync_ssh_user or ansible_user or '' %}
+  {% if user %}-l {{user}}{% endif %}
+  {% endif %}
+mailman_build: false
+mailman_pull: true
+mailman_registries: []
+#- {registry: registry.foo.net, username: foo, password: bar}
+mailman_compose_files: [docker-compose.yml]
+mailman_dc: docker-compose
+mailman_docker_env_freeform: |-
+  {{ mailman_docker_env_defaults}}
+  {{ mailman_docker_env_extra}}
+mailman_docker_env_defaults: |-
+  #
+# very small, perfect for testing purpose
+mailman_pull_args: ""
+# in postconf format
+mailman_postfix_conf: |-
+  mydestination={{mailman_destinations}};
+  recipient_canonical_maps=regexp:/etc/postfix/virtual;
+  transport_maps= regexp:/opt/mailman/var/data/postfix_lmtp;
+  local_recipient_maps= regexp:/opt/mailman/var/data/postfix_lmtp;
+  relay_domains= regexp:/opt/mailman/var/data/postfix_domains;
+mailman_postfix_mynetwork: "127.0.0.0/8"
+# mailman_postfix_mynetwork: "127.0.0.1/8 {{mailman_network}}.24/32"
+mailman_archiver_from: "*"
+mailman_network: 172.34.14
+mailman_listening_if: "0.0.0.0"
+mailman_listening_int_if: "127.0.0.1"
+mailman_listening_port: "80"
+mailman_listening_int_port: "8080"
+#  (example mail.example.com:25, or [email-smtp.us-west-2.amazonaws.com]:587).
+mailman_postfix_relay_host: ""
+#  in format: RELAYHOST_PASSWORDMAP=[mail1.example.com]:587:user1:pass2,mail2.example.com:user2:pass2
+mailman_postfix_relay_map: ""
+# SMTPD client Users user1:password1,user2:password2
+mailman_postfix_user: "mailman"
+mailman_postfix_password: ""
+mailman_postfix_users: "{% if mailman_postfix_password%}{{mailman_postfix_user}}:{{mailman_postfix_password}}{%endif%}"
+#
+mailman_tz: Europe/Paris
+mailman_msg_sizelimit: 300024000
+mailman_smtp_host: "postfix"
+mailman_smtp_port: "25"
+# set to nonnull to redir all outgoing mails to admin
+mailman_redir_all_mails: ""
+mailman_log_to_console: "yes"
+mailman_dotenv: |-
+  {%- macro envd(k, v, t=None) %}
+  {%- if t is none%}{%set test=v%}{%else%}{%set test=t%}{%endif%}
+  {{- test and '{0}={1}'.format(k, v) or ''}}
+  {%- endmacro %}
+  # docker
+  MAILMAN_DESTINATIONS={{mailman_destinations}}
+  MAILMAN_REDIR_ALL_MAILS={{mailman_redir_all_mails}}
+  DATA_DIR={{mailman_data_volume}}
+  LISTENING_IF={{mailman_listening_if}}
+  LISTENING_INT_IF={{mailman_listening_int_if}}
+  LISTENING_PORT={{mailman_listening_port}}
+  LISTENING_INT_PORT={{mailman_listening_int_port}}
+  DOCKER_BUILDKIT=1
+  COMPOSE_DOCKER_CLI_BUILD=1
+  BUILDKIT_PROGRESS=plain
+  BUILDKIT_INLINE_CACHE=1
+  PG_IMAGE={{mailman_postgres_image}}
+  DBS_IMAGE={{mailman_dbs_image}}
+  COMPOSE_PROJECT_NAME={{mailman_composename}}
+  CONTROL_COMPOSE_FILES={{mailman_compose_files|join(' ')}}
+  COMPOSE_FILE={{mailman_compose_files|join(':')}}
+  MAILMAN_NETWORK={{mailman_network}}
+  MAILMAN_IMAGE={{mailman_image}}
+  WEB_IMAGE={{mailman_web_image}}
+  # postfix
+  TZ={{mailman_tz}}
+  {{envd('POSTCONF', mailman_postfix_conf.splitlines()|join(''))}}
+  {{envd('SMTPD_USERS', mailman_postfix_users)}}
+  {{envd('RELAYHOST_AUTH', 'yes', mailman_postfix_relay_map)}}
+  {{envd('RELAYHOST_PASSWORDMAP', mailman_postfix_relay_map)}}
+  POSTFIX_IMAGE=corpusops/panubo-postfix:latest
+  SIZELIMIT={{mailman_msg_sizelimit}}
+  MAILNAME={{mailman_lists_domain}}
+  MYNETWORKS={{mailman_postfix_mynetwork.strip().replace('\n', ' ')}}
+  LDAPAUTH_IMAGE={{mailman_ldapauth_image}}
+  ### mailman/postfix
+  {{envd('SMTP_HOST_USER', mailman_postfix_user, mailman_postfix_users)}}
+  {{envd('SMTP_HOST_PASSWORD', mailman_postfix_password, mailman_postfix_users)}}
+  {{envd('SMTP_HOST', mailman_smtp_host)}}
+  {{envd('SMTP_PORT', mailman_smtp_port)}}
+  {{envd('RELAYHOST', mailman_postfix_relay_host)}}
+  ####
+  # mailman
+  {{envd('LOG_TO_CONSOLE', mailman_log_to_console)}}
+  WEB_DOMAIN={{mailman_domain}}
+  SERVE_FROM_DOMAIN={{mailman_lists_domain}}
+  DJANGO_ALLOWED_HOSTS={{mailman_domain}}
+  WEB_ALT_DOMAINS={{mailman_alt_domains|join(' ')}}
+  MM_DOMAIN={{mailman_domain}}
+  MM_ALT_DOMAINS={{mailman_domains|join(' ')}}
+  MTA=postfix
+  SERVER_EMAIL={{mailman_server_email}}
+  LISTS_DOMAIN={{mailman_lists_domain}}
+  SERVICES_IMAGE={{mailman_services_image}}
+  SERVICES_DEBIAN_IMAGE={{mailman_services_debian_image}}
+  NGINX_IMAGE={{mailman_nginx_image}}
+  SENTRY_DSN={{mailman_sentry}}
+  POSTGRES_DB={{mailman_db_name}}
+  POSTGRES_HOST={{mailman_db_host}}
+  POSTGRES_PORT={{mailman_db_port}}
+  POSTGRES_DB_USER={{mailman_db_user}}
+  POSTGRES_DB_PASSWORD={{mailman_db_user}}
+  POSTGRES_USER={{mailman_db_user}}
+  POSTGRES_PASSWORD={{mailman_db_password}}
+  PGPASSORD={{mailman_db_password}}
+  PGPASSD={{mailman_db_password}}
+  HYPERKITTY_API_KEY={{mailman_archiver_key}}
+  WEB_SECRET_KEY={{mailman_web_secret_key}}
+  MM_SECRET_KEY={{mailman_secret_key}}
+  MM_DB_USER={{mailman_db_mailman_user}}
+  MM_DB_NAME={{mailman_db_mailman_name}}
+  MM_DB_PASSWORD={{mailman_db_mailman_password}}
+  WEB_DB_NAME={{mailman_db_web_name}}
+  WEB_DB_USER={{mailman_db_web_user}}
+  WEB_DB_PASSWORD={{mailman_db_web_password}}
+  OLD_MM_HOST={{mailman_old_host}}
+  OLD_DB_HOST={{mailman_old_db_host}}
+  OLD_DB_PORT={{mailman_old_db_port}}
+  OLD_MM_DB_NAME={{mailman_old_db_mailman_name}}
+  OLD_PT_DB_NAME={{mailman_old_db_postorius_name}}
+  OLD_HK_DB_NAME={{mailman_old_db_hyperkitty_name}}
+  OLD_MM_DB_USER={{mailman_old_db_mailman_user}}
+  OLD_PT_DB_USER={{mailman_old_db_postorius_user}}
+  OLD_HK_DB_USER={{mailman_old_db_hyperkitty_user}}
+  OLD_MM_DB_PASSWORD={{mailman_old_db_mailman_password}}
+  OLD_PT_DB_PASSWORD={{mailman_old_db_postorius_password}}
+  OLD_HK_DB_PASSWORD={{mailman_old_db_hyperkitty_password}}
+  A_DB_URL=postgres://{{mailman_db_user}}:{{mailman_db_password}}@{{mailman_db_host}}:{{mailman_db_port}}/{{mailman_db_name}}
+  MM_DB_URL=postgres://{{mailman_db_mailman_user}}:{{mailman_db_mailman_password}}@{{mailman_db_host}}:{{mailman_db_port}}/{{mailman_db_mailman_user}}
+  WEB_DB_URL=postgres://{{mailman_db_web_user}}:{{mailman_db_web_password}}@{{mailman_db_host}}:{{mailman_db_port}}/{{mailman_db_web_name}}
+  MAILMAN_REST_USER={{mailman_rest_api_user}}
+  MAILMAN_REST_PASSWORD={{mailman_rest_api_pass}}
+  MAILMAN_REST_API_USER={{mailman_rest_api_user}}
+  MAILMAN_REST_API_PASS={{mailman_rest_api_pass}}
+  LDAP_URL={{mailman_ldap_url}}
+  LDAP_FILTER={{mailman_ldap_filter}}
+  LDAP_STARTTLS={{mailman_ldap_starttls}}
+  LDAP_BINDDN={{mailman_ldap_binddn}}
+  LDAP_BINDPW={{mailman_ldap_binddn_passwd}}
+  LDAP_BASEDN={{mailman_ldap_basedn}}
+  LDAP_ADMINS={{mailman_ldap_admins|to_json}}
+  LDAP_MAIL_ATTR={{mailman_mail_attr}}
+  LANGUAGE_CODE={{mailman_language}}
+  MAILMAN_ADMIN_USER={{mailman_sysadmin_user}}
+  DJANGO_SERVER_USER={{mailman_sysadmin_user}}
+  MAILMAN_ADMIN_EMAIL={{mailman_sysadmin_mail}}
+  MAILMAN_ARCHIVER_KEY={{mailman_archiver_key}}
+  ALLOWED_HOSTS={{mailman_allowed_hosts|to_json}}
+  DEFAULT_FROM_EMAIL={{mailman_default_from_email}}
+  SERVER_EMAIL={{mailman_server_email}}
+  MAILMAN_ARCHIVER_FROM={{mailman_archiver_from}}
+mailman_ldap_admins: ["cn=sys,ou=group,{{mailman_ldap_basedn}}"]
+mailman_mail_attr: mail
+mailman_db_host: db
+mailman_db_name: db
+mailman_db_port: 5432
+mailman_db_user: mailman
+mailman_db_mailman_name: mailman
+mailman_db_mailman_user: "{{mailman_db_user}}"
+mailman_db_mailman_password: "{{mailman_db_password}}"
+mailman_db_web_name: web
+mailman_db_web_user: "{{mailman_db_user}}"
+mailman_db_web_password: "{{mailman_db_password}}"
+mailman_dotenv_extra: ""
+# free form for params inside dockerenv
+#
+mailman_docker_env_extra: ""
+mailman_sentry: ""
+mailman_rest_api_user: restadmin
+mailman_rest_api_pass: bR1pE9qJ8eR6rN2hJ3yJ9eO4cL7xI4uK
+mailman_archiver_key: jA7gN9pO4hJ4wX3pR9nB7xX1oE0vH1iC
+mailman_secret_key: qG9jD7jQ1bA2uU7jK3lH6qS6xF0vJ5bQwR7rW2xM3kN6dH1vQ1xG6eA2nV4bP6tZ
+mailman_web_secret_key: "{{mailman_secret_key}}"
+mailman_language: "fr-fr"
+mailman_localhost: ["localhost", "127.0.0.1", "mailman-web", "postorius", "hyperkitty", "0.0.0.0"]
+mailman_allowed_hosts: "{{(mailman_localhost+[mailman_domain]+mailman_alt_domains)}}"
+mailman_sysadmin_user: sysadmin
+mailman_sysadmin_mail: "{{mailman_sysadmin_user}}@{{mailman_tld_domain}}"
+mailman_default_from_email: "no-reply@{{mailman_tld_domain}}"
+mailman_server_email: "{{mailman_sysadmin_mail}}"
+mailman_web_default_settings: |-
+  {% macro envd(d, k=none, json=False) %}{{d}} = {%if json%}json.loads({%endif%}os.environ['{{k or d}}']{%if json%}){%endif%}{%endmacro%}
+  import logging, os, copy, json
+  from settings_copy import LOGGING
+  USE_X_FORWARDED_HOST = True
+  ADMINS=[('', os.environ['SERVER_EMAIL'])]
+  LOGGING['handlers'].update({
+      'syslog': {
+          'level': 'INFO',
+          'class': 'logging.handlers.SysLogHandler',
+          'address': (os.environ.get('SYSLOGD_ADDRESS', 'log'),
+                      os.environ.get('SYSLOGD_PORT', 10514)),
+          'formatter': 'verbose',
+      },
+  })
+  for h, hdata in LOGGING['loggers'].items():
+      handlers = hdata.get('handlers', [])
+      if 'file' in handlers:
+          handlers = hdata['handlers'] = [a for a in handlers if a != 'file']
+      if 'syslog' not in handlers:
+          handlers.append('syslog')
+  {{envd('DJANGO_SERVER_USER')}}
+  {{envd('LANGUAGE_CODE')}}
+  {{envd('TZ')}}
+  {{envd('MAILMAN_ARCHIVER_FROM')}}
+  {{envd('MAILMAN_ADMIN_USER')}}
+  {{envd('MAILMAN_ADMIN_EMAIL')}}
+  {{envd('MAILMAN_REST_API_USER')}}
+  {{envd('MAILMAN_REST_API_PASS')}}
+  {{envd('MAILMAN_ARCHIVER_KEY')}}
+  {{envd('ALLOWED_HOSTS', json=True)}}
+  {{envd('DEFAULT_FROM_EMAIL')}}
+  {{envd('SERVER_EMAIL')}}
+  {% if mailman_ldap_url %}
+  {{mailman_auth_ldap_settings}}
+  {% endif %}
+mailman_web_extra_settings: "{{mailman_web_default_settings}}"
+#
+mailman_old_host: ""
+mailman_old_db_host: ""
+mailman_old_db_port: ""
+mailman_old_db_mailman_name: ""
+mailman_old_db_postorius_name: ""
+mailman_old_db_hyperkitty_name: ""
+mailman_old_db_mailman_user: ""
+mailman_old_db_postorius_user: ""
+mailman_old_db_hyperkitty_user: ""
+mailman_old_db_mailman_password: ""
+mailman_old_db_postorius_password: ""
+mailman_old_db_hyperkitty_password: ""
+mailman_ldap_url: ''
+mailman_ldap_binddn: ''
+mailman_ldap_binddn_passwd: ''
+mailman_ldap_starttls: 'y'
+mailman_auth_ldap_settings: |-
+      {% macro envd(d, k=none, json=False) %}{{d}} = {%if json%}json.loads({%endif%}os.environ['{{k or d}}']{%if json%}){%endif%}{%endmacro%}
+      import ldap
+      {{envd('LDAP_MAIL_ATTR')}}
+      {{envd('LDAP_BASEDN')}}
+      {{envd('AUTH_LDAP_SERVER_URI', 'LDAP_URL')}}
+      {{envd('AUTH_LDAP_BIND_DN', 'LDAP_BINDDN')}}
+      {{envd('AUTH_LDAP_BIND_PASSWORD', 'LDAP_BINDPW')}}
+      AUTHENTICATION_BACKENDS = (
+            'django_auth_ldap.backend.LDAPBackend',
+            'django.contrib.auth.backends.ModelBackend',
+            'allauth.account.auth_backends.AuthenticationBackend',
+        )
+      AUTH_LDAP_USER_DN_TEMPLATE = f"{{mc_mailman_ldap_usertemplate}}"
+      {% if mailman_ldap_starttls %}
+      AUTH_LDAP_START_TLS = True
+      {% endif %}
+      AUTH_LDAP_USER_ATTR_MAP = {"email": LDAP_MAIL_ATTR}
+      from django_auth_ldap.config import LDAPSearch, GroupOfNamesType
+      AUTH_LDAP_GROUP_SEARCH = LDAPSearch(f"{{mc_mailman_ldap_grouptemplate}}",
+          ldap.SCOPE_SUBTREE, "(objectClass=groupOfNames)"
+      )
+      AUTH_LDAP_GROUP_TYPE = GroupOfNamesType()
+      {{envd('LDAP_ADMINS', json=True)}}
+      AUTH_LDAP_USER_FLAGS_BY_GROUP = {
+          "is_active": "{{mailman_ldap_active_group}}",
+          "is_staff": LDAP_ADMINS[:],
+          "is_superuser": LDAP_ADMINS[:],
+      }
+mc_mailman_ldap_usertemplate: "uid=%(user)s,ou=People,{{mailman_ldap_basedn}}"
+mc_mailman_ldap_grouptemplate: "ou=group,{{mailman_ldap_basedn}}"
+mailman_ldap_active_group: "cn=mailman,ou=group,{{mailman_ldap_basedn}}"
+# mailman_ldap_url: 'ldap://ldap.foo.net'
+# mailman_ldap_basedn: 'dc=foo,dc=org'
+# mailman_ldap_filter: '(&(uid=%(username)s)(objectClass=person)(memberof=cn=foogroup,ou=group,dc=foo,dc=org))'
+# mailman_ldap_binddn: 'uid=foo,ou=People,dc=foo,dc=net'
+# mailman_ldap_binddn_passwd: '123456789'
+

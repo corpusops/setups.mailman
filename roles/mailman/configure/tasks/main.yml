@@ -1,0 +1,5 @@
+---
+- include_role: {name: mailman/layout}
+  tags: [mailman_layout, layout]
+- include_role: {name: mailman/configs}
+  tags: [mailman_configs, configs]

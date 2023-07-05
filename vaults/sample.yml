@@ -1,0 +1,36 @@
+---
+all: {vars: {mailman_servers: mailman_servers}}
+mailman:
+  children:
+    mailman_servers:
+      children:
+        mailman_prod:
+          hosts: {prod-docker-mailman.foo.org: {}}
+          vars:
+  vars:
+    # mailman_redir_all_mails: "1"
+    mailman_tld_domain: "foo.com"
+    mailman_site_owner: "sysadmin+newmailman@foo.com"
+    mailman_lists_domain: lists.foo.com
+    mailman_ldap_url: 'ldap://ldap.foo.org'
+    mailman_ldap_filter: '(&(uid=%(username)s)(objectClass=person)(memberof=cn=makina-people,ou=group,{{mailman_ldap_basedn}}))'
+    mailman_ldap_basedn: 'dc=foo,dc=org'
+    mailman_ldap_binddn: 'uid=listaccess,ou=People,{{mailman_ldap_basedn}}'
+    mailman_ldap_binddn_passwd: 'uqQnC1ObLkpLTjPMh1LPagp'
+    mailman_db_password: "sXoG4hxpmNfTvENDUAs"
+    mailman_postorius_db_password: "Y5Rp9imexHPEoj7DOqbj"
+    mailman_hyperkitty_db_password: "UX7ECAaVBDoYsXoG4hx"
+    mailman_domain: mailman.foo.com
+    mailman_rest_api_pass: jmNjGA0pOFtNT1sSNyUX7ECAaVBDoYsXoG4hxpmNfTvENDUAskRrSj5UlWBqTKKG
+    mailman_archiver_key: lTustREorNQJ2k57sEyH7Tw8FdE0kbSab4uXuqQnC1ObLkpLTjPMh1LPagpD2cdp
+    mailman_secret_key: 5JswSXKGBjvJv5DYxOcBY5Rp9imexHPEoj7DOqbjDv37sVPnUC7fAqmmf7S9y6Tk
+    mailman_postfix_relay_host: "[mail.foo.org]:587"
+    mailman_postfix_relay_map: "[mail.foo.org]:587:tsa@foo.com:2bf7d570-1822-419c-8033-ba706957a775"
+    mailman_postfix_password: "4154489789462"
+    mailman_ldap_active_group: "cn=allpeople,ou=group,{{mailman_ldap_basedn}}"
+    mailman_mail_attr: shortMail
+    mailman_ldap_admins: [
+      "cn=foobar,ou=group,{{mailman_ldap_basedn}}",
+        "cn=foobar2,ou=group,{{mailman_ldap_basedn}}",
+               "cn=sys,ou=group,{{mailman_ldap_basedn}}"]
+

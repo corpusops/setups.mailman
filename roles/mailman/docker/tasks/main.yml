@@ -1,0 +1,22 @@
+- include_tasks: docker_login.yml
+  with_items: "{{mailman_registries}}"
+  tags: [mailman_login, login, docker_login]
+- shell: |
+    set -ex
+    cd "{{mailman_hostdir}}"
+    : {{mailman_dc}} build {{mailman_build_args}}
+  when:
+  - "mailman_build|copsf_asbool"
+  - "mailman_build_args|copsf_asbool"
+  tags: [mailman_login, login, docker_login]
+# ensure all images are (re) pulled
+- shell: |
+    set -ex
+    cd "{{mailman_hostdir}}"
+    {{mailman_dc}} pull {{mailman_pull_args}}
+  retries: 5
+  delay: 10
+  when:
+  - "mailman_pull|copsf_asbool"
+  tags: [mailman_pull, pull, docker_pull]
+
